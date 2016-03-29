@@ -39,7 +39,11 @@ static redisContext *g_redis = NULL;
 static void (*old_zend_execute_ex)(zend_execute_data *execute_data);
 
 /* True global resources - no need for thread safety here */
-static int le_cfc;
+static int   le_cfc;
+static int   cfc_enable       =   0;
+static char* cfc_redis_host   =   NULL;
+static int   cfc_redis_port   =   6379;
+static char* cfc_prefix       =   NULL;
 
 /* {{{ PHP_INI
  */
@@ -50,11 +54,103 @@ PHP_INI_BEGIN()
     STD_PHP_INI_ENTRY("cfc.redis_port", "6379", PHP_INI_ALL, OnUpdateLong, redis_port, zend_cfc_globals, cfc_globals)
 PHP_INI_END()
 */
+void cfc_atoi(const char *str, int *ret, int *len)
+{
+    const char *ptr = str;
+    char ch;
+    int absolute = 1;
+    int rlen, result;
+
+    ch = *ptr;
+
+    if (ch == '-') {
+        absolute = -1;
+        ++ptr;
+    } else if (ch == '+') {
+        absolute = 1;
+        ++ptr;
+    }
+
+    for (rlen = 0, result = 0; *ptr != '\0'; ptr++) {
+        ch = *ptr;
+
+        if (ch >= '0' && ch <= '9') {
+            result = result * 10 + (ch - '0');
+            rlen++;
+        } else {
+            break;
+        }
+    }
+
+    if (ret) *ret = absolute * result;
+    if (len) *len = rlen;
+}
+
+ZEND_INI_MH(php_cfc_enable)
+{
+    if (!new_value || new_value->len == 0) {
+        return FAILURE;
+    }
+
+    if (!strcasecmp(new_value->val, "on") || !strcmp(new_value->val, "1")) {
+        cfc_enable = 1;
+    } else {
+        cfc_enable = 0;
+    }
+
+    return SUCCESS;
+}
+
+ZEND_INI_MH(php_cfc_redis_host)
+{
+    if (!new_value || new_value->len == 0) {
+        return FAILURE;
+    }
+
+    cfc_redis_host = strdup(new_value->val);
+    if (cfc_redis_host == NULL) {
+        return FAILURE;
+    }
+
+    return SUCCESS;
+}
+
+ZEND_INI_MH(php_cfc_redis_port)
+{
+    int len;
+
+    if (!new_value || new_value->len == 0) {
+        return FAILURE;
+    }
+
+    cfc_atoi(new_value->val, &cfc_redis_port, &len);
+
+    if (len == 0) { /*failed */
+        return FAILURE;
+    }
+
+    return SUCCESS;
+}
+
+ZEND_INI_MH(php_cfc_prefix)
+{
+    if (!new_value || new_value->len == 0) {
+        return FAILURE;
+    }
+
+    cfc_prefix = strdup(new_value->val);
+    if (cfc_redis_host == NULL) {
+        return FAILURE;
+    }
+
+    return SUCCESS;
+}
+
 PHP_INI_BEGIN()
-	PHP_INI_ENTRY("cfc.enable", "On", PHP_INI_ALL, NULL)
-	PHP_INI_ENTRY("cfc.redis_host", "127.0.0.1", PHP_INI_ALL, NULL)
-	PHP_INI_ENTRY("cfc.redis_port", "6379", PHP_INI_ALL, NULL)
-	PHP_INI_ENTRY("cfc.prefix", NULL, PHP_INI_ALL, NULL)
+	PHP_INI_ENTRY("cfc.enable", "0", PHP_INI_ALL, php_cfc_enable)
+	PHP_INI_ENTRY("cfc.redis_host", "127.0.0.1", PHP_INI_ALL, php_cfc_redis_host)
+	PHP_INI_ENTRY("cfc.redis_port", "6379", PHP_INI_ALL, php_cfc_redis_port)
+	PHP_INI_ENTRY("cfc.prefix", "", PHP_INI_ALL, php_cfc_prefix)
 PHP_INI_END()
 /* }}} */
 
@@ -68,16 +164,14 @@ PHP_INI_END()
 
 void redis_init()
 {
-	char *host = INI_STR("cfc.redis_host");
-	int port = INI_INT("cfc.redis_port");
     char *msg;
 
-    if (!host) {
-        msg = "redis host have not set, using `-r' option";
+    if (!cfc_redis_host) {
+        msg = "redis host have not set";
         goto error;
     }
 
-    g_redis = redisConnect(host, port);
+    g_redis = redisConnect(cfc_redis_host, cfc_redis_port);
     if (g_redis == NULL || g_redis->err) {
         msg = "Can not connect to redis server";
         goto error;
@@ -168,13 +262,6 @@ static char *get_function_name(zend_execute_data * execute_data)
 		/* extract function name from the meta info */
 		if (curr_func->common.function_name)
 		{
-			/* previously, the order of the tests in the "if" below was
-			 * flipped, leading to incorrect function names in profiler
-			 * reports. When a method in a super-type is invoked the
-			 * profiler should qualify the function name with the super-type
-			 * class name (not the class name based on the run-time type
-			 * of the object.
-			 */
 			func = curr_func->common.function_name->val;
 			len  = curr_func->common.function_name->len + 1;
 			cls = curr_func->common.scope ?
@@ -224,25 +311,30 @@ static char *get_function_name(zend_execute_data * execute_data)
 
 static void my_zend_execute_ex(zend_execute_data *execute_data)
 {
-
 	char *func = NULL;
 	func = get_function_name(execute_data TSRMLS_CC);
 	if (!func) {
-		old_zend_execute_ex(execute_data TSRMLS_CC);
-		return;
+		goto end;
 	}
-	char *prefix = INI_STR("cfc.prefix");
-	if (strncmp(prefix, func, strlen(prefix)) == 0) {
+	if (strlen(cfc_prefix)) {
+		if (strncmp(cfc_prefix, func, strlen(cfc_prefix)) == 0) {
+			redis_incr(func);
+		}
+	} else {
 		redis_incr(func);
 	}
-	old_zend_execute_ex(execute_data TSRMLS_CC);
 	efree(func);
+end:
+	old_zend_execute_ex(execute_data TSRMLS_CC);
 }
 /* {{{ PHP_MINIT_FUNCTION
  */
 PHP_MINIT_FUNCTION(cfc)
 {
 	REGISTER_INI_ENTRIES();
+	if (!cfc_enable) {
+		return SUCCESS;
+	}
 	redis_init();
 	old_zend_execute_ex = zend_execute_ex;
 	zend_execute_ex = my_zend_execute_ex;
@@ -255,6 +347,9 @@ PHP_MINIT_FUNCTION(cfc)
 PHP_MSHUTDOWN_FUNCTION(cfc)
 {
 	UNREGISTER_INI_ENTRIES();
+	if (!cfc_enable) {
+		return SUCCESS;
+	}
 	redis_free();
 	zend_execute_ex = old_zend_execute_ex;
 	return SUCCESS;
