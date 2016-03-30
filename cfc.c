@@ -28,8 +28,13 @@
 #include "php_cfc.h"
 #include "zend_smart_str.h"
 #include <hiredis/hiredis.h>
+#include "log.h"
+#include <pthread.h>
+#include <fcntl.h>
 
 #define HASH_TABLE_NAME "cfc_hash"
+
+static int module_is_shutdown = 0;
 
 /* If you declare any globals in php_cfc.h uncomment this:
 ZEND_DECLARE_MODULE_GLOBALS(cfc)
@@ -44,6 +49,11 @@ static int   cfc_enable       =   0;
 static char* cfc_redis_host   =   NULL;
 static int   cfc_redis_port   =   6379;
 static char* cfc_prefix       =   NULL;
+static char* cfc_logfile      =   NULL;
+
+static cfc_manager_t  __manager, *manager_ptr = &__manager;
+
+pthread_t worker_tid = 0;
 
 /* {{{ PHP_INI
  */
@@ -137,9 +147,22 @@ ZEND_INI_MH(php_cfc_prefix)
     if (!new_value || new_value->len == 0) {
         return FAILURE;
     }
-
     cfc_prefix = strdup(new_value->val);
-    if (cfc_redis_host == NULL) {
+    if (cfc_prefix == NULL) {
+        return FAILURE;
+    }
+
+    return SUCCESS;
+}
+
+ZEND_INI_MH(php_cfc_logfile)
+{
+    if (!new_value || new_value->len == 0) {
+        return FAILURE;
+    }
+
+    cfc_logfile = strdup(new_value->val);
+    if (cfc_logfile== NULL) {
         return FAILURE;
     }
 
@@ -151,6 +174,7 @@ PHP_INI_BEGIN()
 	PHP_INI_ENTRY("cfc.redis_host", "127.0.0.1", PHP_INI_ALL, php_cfc_redis_host)
 	PHP_INI_ENTRY("cfc.redis_port", "6379", PHP_INI_ALL, php_cfc_redis_port)
 	PHP_INI_ENTRY("cfc.prefix", "", PHP_INI_ALL, php_cfc_prefix)
+	PHP_INI_ENTRY("cfc.logfile", "/tmp/cfc.log", PHP_INI_ALL, php_cfc_logfile)
 PHP_INI_END()
 /* }}} */
 
@@ -162,25 +186,21 @@ PHP_INI_END()
 /* {{{ proto string confirm_cfc_compiled(string arg)
    Return a string to confirm that the module is compiled in */
 
-void redis_init()
+int redis_init()
 {
     char *msg;
 
     if (!cfc_redis_host) {
-        msg = "redis host have not set";
-        goto error;
+        CFC_LOG_ERROR("redis host have not set");
+		return -1;
     }
 
     g_redis = redisConnect(cfc_redis_host, cfc_redis_port);
     if (g_redis == NULL || g_redis->err) {
-        msg = "Can not connect to redis server";
-        goto error;
+        CFC_LOG_ERROR("Can not connect to redis server");
+		return -1;
     }
-    return;
-
-error:
-    fprintf(stderr, "%s\n", msg);
-    exit(1);
+    return 0;
 }
 
 void redis_free()
@@ -242,6 +262,15 @@ static void php_cfc_init_globals(zend_cfc_globals *cfc_globals)
 }
 */
 /* }}} */
+int set_nonblocking(int fd)
+{
+    int flags;
+
+    if ((flags = fcntl(fd, F_GETFL, 0)) < 0 ||
+         fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+        return -1;
+    return 0;
+}
 
 static char *get_function_name(zend_execute_data * execute_data)
 {
@@ -309,6 +338,41 @@ static char *get_function_name(zend_execute_data * execute_data)
 	return ret;
 }
 
+static void push_func_to_queue(char *func)
+{
+	if (NULL == func) {
+		return;
+	}
+	cfc_item_t *item;
+	int length = 0;
+	length = sizeof(*item) + strlen (func) + 1;
+	item = (cfc_item_t *)emalloc(length);
+
+	if (!item) {
+		return;
+	}
+	item->size = strlen(func);
+	item->next = NULL;
+	memcpy(item->buffer, func, strlen(func));
+
+	spin_lock(&manager_ptr->qlock);
+
+	if (!manager_ptr->head) {
+		manager_ptr->head = item;
+	}
+
+	if (manager_ptr->tail) {
+		manager_ptr->tail->next = item;
+	}
+
+	manager_ptr->tail = item;
+
+	spin_unlock(&manager_ptr->qlock);
+
+	/* notify worker thread */
+	write(manager_ptr->notifiers[1], "\0", 1);
+}
+
 static void my_zend_execute_ex(zend_execute_data *execute_data)
 {
 	char *func = NULL;
@@ -318,14 +382,109 @@ static void my_zend_execute_ex(zend_execute_data *execute_data)
 	}
 	if (strlen(cfc_prefix)) {
 		if (strncmp(cfc_prefix, func, strlen(cfc_prefix)) == 0) {
-			redis_incr(func);
+			push_func_to_queue(func);
 		}
 	} else {
-		redis_incr(func);
+		push_func_to_queue(func);
 	}
 	efree(func);
 end:
 	old_zend_execute_ex(execute_data TSRMLS_CC);
+}
+
+void *cfc_thread_worker(void *arg)
+{
+	fd_set read_set;
+	int notify = manager_ptr->notifiers[0];
+	struct timeval tv = {10, 0}; /* 1 sec to update redis */
+
+	FD_ZERO(&read_set);
+
+	for (;;) {
+
+		if (module_is_shutdown) {
+			break;
+		}
+
+		FD_SET(notify, &read_set);
+
+		(void)select(notify + 1, &read_set, NULL, NULL, &tv);
+
+		if (FD_ISSET(notify, &read_set)) {
+			char tmp;
+			int result;
+			cfc_item_t *item;
+
+			for (;;) {
+				result = read(notify, &tmp, 1);
+				if (result == -1 || tmp != '\0') {
+					break;
+				}
+
+				/* Get item from worker queue */
+
+				spin_lock(&manager_ptr->qlock);
+
+				item = manager_ptr->head;
+
+				if (item) {
+					manager_ptr->head = item->next;
+				} else {
+					manager_ptr->head = NULL;
+				}
+
+				if (!manager_ptr->head) {
+					manager_ptr->tail = NULL;
+				}
+
+				spin_unlock(&manager_ptr->qlock);
+
+				if (item) {
+					item->buffer[item->size] = '\0';
+					result = redis_incr(item->buffer);
+					efree(item);
+				}
+			}
+		}
+	}
+
+	return NULL;
+}
+
+int cfc_init(void)
+{
+	manager_ptr->head = NULL;
+	manager_ptr->tail = NULL;
+	manager_ptr->qlock = 0; /* init can lock */
+
+	if (pipe(manager_ptr->notifiers) == -1) {
+		return -1;
+	}
+
+	if (cfc_init_log(cfc_logfile, CFC_LOG_LEVEL_DEBUG) == -1) {
+		close(manager_ptr->notifiers[0]);
+		close(manager_ptr->notifiers[1]);
+		return -1;
+	}
+
+	set_nonblocking(manager_ptr->notifiers[0]);
+	set_nonblocking(manager_ptr->notifiers[1]);
+
+	if (pthread_create(&worker_tid, NULL,
+		cfc_thread_worker, NULL) == -1)
+	{
+		close(manager_ptr->notifiers[0]);
+		close(manager_ptr->notifiers[1]);
+		return -1;
+	}
+
+
+	if (redis_init() == -1) {
+		return -1;
+	}
+
+	return 0;
+
 }
 /* {{{ PHP_MINIT_FUNCTION
  */
@@ -335,7 +494,9 @@ PHP_MINIT_FUNCTION(cfc)
 	if (!cfc_enable) {
 		return SUCCESS;
 	}
-	redis_init();
+	if (cfc_init() == -1) {
+		return FAILURE;
+	}
 	old_zend_execute_ex = zend_execute_ex;
 	zend_execute_ex = my_zend_execute_ex;
 	return SUCCESS;
@@ -346,9 +507,13 @@ PHP_MINIT_FUNCTION(cfc)
  */
 PHP_MSHUTDOWN_FUNCTION(cfc)
 {
+	module_is_shutdown = 1;
 	UNREGISTER_INI_ENTRIES();
 	if (!cfc_enable) {
 		return SUCCESS;
+	}
+	if (worker_tid) {
+		pthread_join(worker_tid, NULL);
 	}
 	redis_free();
 	zend_execute_ex = old_zend_execute_ex;

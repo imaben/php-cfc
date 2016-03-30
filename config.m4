@@ -50,6 +50,7 @@ if test "$PHP_CFC" != "no"; then
   dnl PHP_CHECK_LIBRARY($LIBNAME,$LIBSYMBOL,
   dnl [
   PHP_ADD_LIBRARY_WITH_PATH(hiredis, $CFC_DIR/$PHP_LIB, CFC_SHARED_LIBADD)
+  PHP_ADD_LIBRARY_WITH_PATH(pthread, $CFC_DIR/$PHP_LIB, CFC_SHARED_LIBADD)
   dnl   AC_DEFINE(HAVE_CFCLIB,1,[ ])
   dnl ],[
   dnl   AC_MSG_ERROR([wrong cfc lib version or lib not found])
@@ -59,5 +60,5 @@ if test "$PHP_CFC" != "no"; then
   dnl
   PHP_SUBST(CFC_SHARED_LIBADD)
 
-  PHP_NEW_EXTENSION(cfc, cfc.c, $ext_shared,, -DZEND_ENABLE_STATIC_TSRMLS_CACHE=1)
+  PHP_NEW_EXTENSION(cfc, cfc.c spin.c log.c, $ext_shared,, -DZEND_ENABLE_STATIC_TSRMLS_CACHE=1)
 fi

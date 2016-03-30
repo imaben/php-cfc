@@ -47,6 +47,19 @@ ZEND_BEGIN_MODULE_GLOBALS(cfc)
 	char *global_string;
 ZEND_END_MODULE_GLOBALS(cfc)
 */
+#include "spin.h"
+typedef struct _cfc_item_s {
+	struct _cfc_item_s *next;
+	int size;
+	char buffer[1];
+} cfc_item_t;
+
+typedef struct {
+	cfc_item_t *head,
+			   *tail;
+	int notifiers[2];
+	spin_t qlock;
+} cfc_manager_t;
 
 /* Always refer to the globals in your function as CFC_G(variable).
    You are encouraged to rename these macros something shorter, see
