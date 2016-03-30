@@ -55,6 +55,47 @@ static cfc_manager_t  __manager, *manager_ptr = &__manager;
 
 pthread_t worker_tid = 0;
 
+typedef struct {
+    char *orig;
+    int count;
+    char **val;
+} cfc_split_t;
+
+cfc_split_t cfc_prefixs = { 0 };
+
+static int cfc_split(char *delim, char *str, cfc_split_t *t)
+{
+    int len = strlen(str);
+    t->orig = (char *)malloc(strlen(str) * sizeof(char) + 1);
+    t->count = 0;
+    memcpy(t->orig, str, len);
+    t->orig[len] = '\0';
+    char *p = strtok(t->orig, delim);
+    while (p) {
+        if (t->count == 0) {
+            t->val = (char **)malloc(sizeof(char *));
+        } else {
+            t->val = (char **)realloc(t->val, sizeof(char *) * t->count);
+        }
+        t->val[t->count] = strdup(p);
+        p = strtok(NULL, delim);
+        t->count++;
+    }
+    return 0;
+}
+
+static void cfc_split_free(cfc_split_t *t)
+{
+	free(t->orig);
+	for (int i = 0; i < t->count; i++) {
+		free(t->val[0]);
+	}
+	if (t->count > 0) {
+		free(t->val);
+	}
+}
+
+
 /* {{{ PHP_INI
  */
 /* Remove comments and fill if you need to have entries in php.ini
@@ -262,6 +303,7 @@ static void php_cfc_init_globals(zend_cfc_globals *cfc_globals)
 }
 */
 /* }}} */
+
 int set_nonblocking(int fd)
 {
     int flags;
@@ -380,9 +422,11 @@ static void my_zend_execute_ex(zend_execute_data *execute_data)
 	if (!func) {
 		goto end;
 	}
-	if (strlen(cfc_prefix)) {
-		if (strncmp(cfc_prefix, func, strlen(cfc_prefix)) == 0) {
-			push_func_to_queue(func);
+	if (cfc_prefixs.count) {
+		for (int i = 0; i < cfc_prefixs.count; i++) {
+			if (strncmp(cfc_prefixs.val[i], func, strlen(cfc_prefixs.val[i])) == 0) {
+				push_func_to_queue(func);
+			}
 		}
 	} else {
 		push_func_to_queue(func);
@@ -497,6 +541,7 @@ PHP_MINIT_FUNCTION(cfc)
 	if (cfc_init() == -1) {
 		return FAILURE;
 	}
+	cfc_split(",", cfc_prefix, &cfc_prefixs);
 	old_zend_execute_ex = zend_execute_ex;
 	zend_execute_ex = my_zend_execute_ex;
 	return SUCCESS;
@@ -516,6 +561,7 @@ PHP_MSHUTDOWN_FUNCTION(cfc)
 		pthread_join(worker_tid, NULL);
 	}
 	redis_free();
+	cfc_split_free(&cfc_prefixs);
 	zend_execute_ex = old_zend_execute_ex;
 	return SUCCESS;
 }
