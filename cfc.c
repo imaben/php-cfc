@@ -263,7 +263,7 @@ int redis_incr(char *func)
     smart_str_0(&command);
     reply = redisCommand(g_redis, command.s->val);
     if (g_redis->err != 0) {
-        php_printf("redis hash set failure, error:%d, command:%s\n", g_redis->err, command.s);
+        CFC_LOG_ERROR("redis hash set failure, error:%d, command:%s\n", g_redis->err, command.s);
     } else {
         r = (int)reply->integer;
     }
