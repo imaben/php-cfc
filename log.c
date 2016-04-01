@@ -79,6 +79,7 @@ void cfc_log(int level, char *fmt, ...)
     cfc_log_buffer[off1 + off2] = '\n';
 
     fwrite(cfc_log_buffer, off1 + off2 + 1, 1, cfc_log_fp);
+    fflush(cfc_log_fp);
 }
 
 

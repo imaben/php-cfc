@@ -58,6 +58,7 @@ typedef struct {
 	cfc_item_t *head,
 			   *tail;
 	int notifiers[2];
+	int queues[2];
 	spin_t qlock;
 } cfc_manager_t;
 

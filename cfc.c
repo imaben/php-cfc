@@ -34,8 +34,6 @@
 
 #define HASH_TABLE_NAME "cfc_hash"
 
-static int module_is_shutdown = 0;
-
 /* If you declare any globals in php_cfc.h uncomment this:
 ZEND_DECLARE_MODULE_GLOBALS(cfc)
 */
@@ -54,6 +52,7 @@ static char* cfc_logfile      =   NULL;
 static cfc_manager_t  __manager, *manager_ptr = &__manager;
 
 pthread_t worker_tid = 0;
+pthread_t queue_tid = 0;
 
 typedef struct {
     char *orig;
@@ -75,7 +74,7 @@ static int cfc_split(char *delim, char *str, cfc_split_t *t)
         if (t->count == 0) {
             t->val = (char **)malloc(sizeof(char *));
         } else {
-            t->val = (char **)realloc(t->val, sizeof(char *) * t->count);
+            t->val = (char **)realloc(t->val, sizeof(char *) * (t->count + 1));
         }
         t->val[t->count] = strdup(p);
         p = strtok(NULL, delim);
@@ -88,23 +87,13 @@ static void cfc_split_free(cfc_split_t *t)
 {
 	free(t->orig);
 	for (int i = 0; i < t->count; i++) {
-		free(t->val[0]);
+		free(t->val[i]);
 	}
 	if (t->count > 0) {
 		free(t->val);
 	}
 }
 
-
-/* {{{ PHP_INI
- */
-/* Remove comments and fill if you need to have entries in php.ini
-PHP_INI_BEGIN()
-    STD_PHP_INI_ENTRY("cfc.enable",      "1", PHP_INI_ALL, OnUpdateBool, global_value, zend_cfc_globals, cfc_globals)
-    STD_PHP_INI_ENTRY("cfc.redis_host", "127.0.0.1", PHP_INI_ALL, OnUpdateString, redis_host, zend_cfc_globals, cfc_globals)
-    STD_PHP_INI_ENTRY("cfc.redis_port", "6379", PHP_INI_ALL, OnUpdateLong, redis_port, zend_cfc_globals, cfc_globals)
-PHP_INI_END()
-*/
 void cfc_atoi(const char *str, int *ret, int *len)
 {
     const char *ptr = str;
@@ -262,13 +251,16 @@ int redis_incr(char *func)
     smart_str_appendl(&command, " 1", strlen(" 1"));
     smart_str_0(&command);
     reply = redisCommand(g_redis, command.s->val);
-    if (g_redis->err != 0) {
-        CFC_LOG_ERROR("redis hash set failure, error:%d, command:%s\n", g_redis->err, command.s);
+    if (g_redis->err != 0
+		|| reply == NULL
+        || reply->type != REDIS_REPLY_INTEGER) {
+        CFC_LOG_ERROR("redis hash set failure, error:%d, errstr:%s, command:%s\n", g_redis->err, g_redis->errstr, command.s->val);
     } else {
         r = (int)reply->integer;
     }
     smart_str_free(&command);
     freeReplyObject(reply);
+	return r;
 }
 
 PHP_FUNCTION(confirm_cfc_compiled)
@@ -291,18 +283,6 @@ PHP_FUNCTION(confirm_cfc_compiled)
    function definition, where the functions purpose is also documented. Please
    follow this convention for the convenience of others editing your code.
 */
-
-
-/* {{{ php_cfc_init_globals
- */
-/* Uncomment this function if you have INI entries
-static void php_cfc_init_globals(zend_cfc_globals *cfc_globals)
-{
-	cfc_globals->global_value = 0;
-	cfc_globals->global_string = NULL;
-}
-*/
-/* }}} */
 
 int set_nonblocking(int fd)
 {
@@ -385,34 +365,7 @@ static void push_func_to_queue(char *func)
 	if (NULL == func) {
 		return;
 	}
-	cfc_item_t *item;
-	int length = 0;
-	length = sizeof(*item) + strlen (func) + 1;
-	item = (cfc_item_t *)emalloc(length);
-
-	if (!item) {
-		return;
-	}
-	item->size = strlen(func);
-	item->next = NULL;
-	memcpy(item->buffer, func, strlen(func));
-
-	spin_lock(&manager_ptr->qlock);
-
-	if (!manager_ptr->head) {
-		manager_ptr->head = item;
-	}
-
-	if (manager_ptr->tail) {
-		manager_ptr->tail->next = item;
-	}
-
-	manager_ptr->tail = item;
-
-	spin_unlock(&manager_ptr->qlock);
-
-	/* notify worker thread */
-	write(manager_ptr->notifiers[1], "\0", 1);
+	write(manager_ptr->queues[1], func, strlen(func) + 1);
 }
 
 static void my_zend_execute_ex(zend_execute_data *execute_data)
@@ -430,43 +383,48 @@ static void my_zend_execute_ex(zend_execute_data *execute_data)
 		}
 	} else {
 		push_func_to_queue(func);
-	}
-	efree(func);
-end:
+	} efree(func); end:
 	old_zend_execute_ex(execute_data TSRMLS_CC);
 }
 
 void *cfc_thread_worker(void *arg)
 {
+	//pthread_detach(pthread_self());
+	CFC_LOG_DEBUG("Work thread started");
 	fd_set read_set;
 	int notify = manager_ptr->notifiers[0];
-	struct timeval tv = {10, 0}; /* 1 sec to update redis */
+	struct timeval tv = {3, 0}; /* 1 sec to update redis */
 
-	FD_ZERO(&read_set);
 
 	for (;;) {
 
-		if (module_is_shutdown) {
-			break;
-		}
-
+		FD_ZERO(&read_set);
 		FD_SET(notify, &read_set);
 
-		(void)select(notify + 1, &read_set, NULL, NULL, &tv);
+		int rst = select(notify + 1, &read_set, NULL, NULL, NULL);
+		if (rst == -1) {
+			CFC_LOG_ERROR("worker select failure");
+			continue;
+		} else if (rst == 0) {
+			continue;
+		}
 
 		if (FD_ISSET(notify, &read_set)) {
 			char tmp;
 			int result;
 			cfc_item_t *item;
+			int is_quit = 0;
 
 			for (;;) {
 				result = read(notify, &tmp, 1);
-				if (result == -1 || tmp != '\0') {
+				if (tmp == 'q') {
+					is_quit = 1;
+				}
+				if (result == -1 || (tmp != '\0' && tmp != 'q')) {
 					break;
 				}
 
 				/* Get item from worker queue */
-
 				spin_lock(&manager_ptr->qlock);
 
 				item = manager_ptr->head;
@@ -480,13 +438,87 @@ void *cfc_thread_worker(void *arg)
 				if (!manager_ptr->head) {
 					manager_ptr->tail = NULL;
 				}
-
 				spin_unlock(&manager_ptr->qlock);
 
 				if (item) {
-					item->buffer[item->size] = '\0';
 					result = redis_incr(item->buffer);
-					efree(item);
+					free(item);
+				}
+				if (is_quit == 1) {
+					pthread_exit(0);
+				}
+			}
+		}
+	}
+
+	return NULL;
+}
+
+void *cfc_thread_queue(void *arg)
+{
+	CFC_LOG_DEBUG("Queue thread started");
+	fd_set read_set;
+	int queue = manager_ptr->queues[0];
+	char read_buf[4096];
+
+	for (;;) {
+
+		FD_ZERO(&read_set);
+		FD_SET(queue, &read_set);
+
+		int rst = select(queue + 1, &read_set, NULL, NULL, NULL);
+		if (rst == -1) {
+			CFC_LOG_ERROR("queue select failure");
+			continue;
+		} else if (rst == 0) {
+			continue;
+		}
+
+		if (FD_ISSET(queue, &read_set)) {
+			int len;
+			char *offset;
+
+			for (;;) {
+				memset(read_buf, 0, sizeof(read_buf));
+				len = read(queue, &read_buf, sizeof(read_buf));
+				if (len == -1) {
+					break;
+				}
+
+				if (len == 0) {
+					pthread_exit(0);
+				}
+				offset = read_buf;
+				while (strlen(offset)) {
+					int offset_len = strlen(offset);
+					cfc_item_t *item;
+					int length = 0;
+					length = sizeof(*item) + offset_len + 1;
+					item = (cfc_item_t *)pemalloc(length, 1);
+					if (!item) {
+						CFC_LOG_WARN("Memory malloc failure");
+						continue;
+					}
+					item->size = offset_len + 1;
+					item->next = NULL;
+					memcpy(item->buffer, offset, offset_len + 1);
+
+					spin_lock(&manager_ptr->qlock);
+
+					if (!manager_ptr->head) {
+						manager_ptr->head = item;
+					}
+
+					if (manager_ptr->tail) {
+						manager_ptr->tail->next = item;
+					}
+
+					manager_ptr->tail = item;
+
+					spin_unlock(&manager_ptr->qlock);
+					/* notify worker thread */
+					write(manager_ptr->notifiers[1], "\0", 1);
+					offset = offset + offset_len + 1;
 				}
 			}
 		}
@@ -497,6 +529,12 @@ void *cfc_thread_worker(void *arg)
 
 int cfc_init(void)
 {
+#define CLOSE_PIPE \
+		close(manager_ptr->notifiers[0]); \
+		close(manager_ptr->notifiers[1]); \
+		close(manager_ptr->queues[0]); \
+		close(manager_ptr->queues[1])
+
 	manager_ptr->head = NULL;
 	manager_ptr->tail = NULL;
 	manager_ptr->qlock = 0; /* init can lock */
@@ -505,28 +543,42 @@ int cfc_init(void)
 		return -1;
 	}
 
+	if (pipe(manager_ptr->queues) == -1) {
+		return -1;
+	}
+
 	if (cfc_init_log(cfc_logfile, CFC_LOG_LEVEL_DEBUG) == -1) {
-		close(manager_ptr->notifiers[0]);
-		close(manager_ptr->notifiers[1]);
+		CLOSE_PIPE;
 		return -1;
 	}
 
 	set_nonblocking(manager_ptr->notifiers[0]);
 	set_nonblocking(manager_ptr->notifiers[1]);
 
+	set_nonblocking(manager_ptr->queues[0]);
+	set_nonblocking(manager_ptr->queues[1]);
+
 	if (pthread_create(&worker_tid, NULL,
 		cfc_thread_worker, NULL) == -1)
 	{
-		close(manager_ptr->notifiers[0]);
-		close(manager_ptr->notifiers[1]);
+		CFC_LOG_ERROR("Work thread start failure");
+		CLOSE_PIPE;
+		return -1;
+	}
+
+	if (pthread_create(&queue_tid, NULL,
+		cfc_thread_queue, NULL) == -1)
+	{
+		CFC_LOG_ERROR("Queue thread start failure");
+		CLOSE_PIPE;
 		return -1;
 	}
 
 
 	if (redis_init() == -1) {
+		CFC_LOG_ERROR("Redis initialize failure");
 		return -1;
 	}
-
 	return 0;
 
 }
@@ -538,6 +590,7 @@ PHP_MINIT_FUNCTION(cfc)
 	if (!cfc_enable) {
 		return SUCCESS;
 	}
+	spin_init();
 	if (cfc_init() == -1) {
 		return FAILURE;
 	}
@@ -552,12 +605,19 @@ PHP_MINIT_FUNCTION(cfc)
  */
 PHP_MSHUTDOWN_FUNCTION(cfc)
 {
-	module_is_shutdown = 1;
 	UNREGISTER_INI_ENTRIES();
 	if (!cfc_enable) {
 		return SUCCESS;
 	}
+	// 通知线程退出
+	close(manager_ptr->queues[1]);
+	if (queue_tid) {
+		CFC_LOG_ERROR("wait for queue thread");
+		pthread_join(queue_tid, NULL);
+	}
+	write(manager_ptr->notifiers[1], "q", 1);
 	if (worker_tid) {
+		CFC_LOG_ERROR("wait for worker thread");
 		pthread_join(worker_tid, NULL);
 	}
 	redis_free();
