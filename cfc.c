@@ -417,10 +417,7 @@ void *cfc_thread_worker(void *arg)
 
 			for (;;) {
 				result = read(notify, &tmp, 1);
-				if (tmp == 'q') {
-					is_quit = 1;
-				}
-				if (result == -1 || (tmp != '\0' && tmp != 'q')) {
+				if (result == -1 || tmp != '\0')) {
 					break;
 				}
 
@@ -444,7 +441,7 @@ void *cfc_thread_worker(void *arg)
 					result = redis_incr(item->buffer);
 					free(item);
 				}
-				if (is_quit == 1) {
+				if (result == 0) {
 					pthread_exit(0);
 				}
 			}
@@ -615,7 +612,8 @@ PHP_MSHUTDOWN_FUNCTION(cfc)
 		CFC_LOG_ERROR("wait for queue thread");
 		pthread_join(queue_tid, NULL);
 	}
-	write(manager_ptr->notifiers[1], "q", 1);
+
+	close(manager_ptr->notifiers[1]);
 	if (worker_tid) {
 		CFC_LOG_ERROR("wait for worker thread");
 		pthread_join(worker_tid, NULL);
