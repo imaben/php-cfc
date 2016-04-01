@@ -609,13 +609,13 @@ PHP_MSHUTDOWN_FUNCTION(cfc)
 	// 通知线程退出
 	close(manager_ptr->queues[1]);
 	if (queue_tid) {
-		CFC_LOG_ERROR("wait for queue thread");
+		CFC_LOG_DEBUG("wait for queue thread");
 		pthread_join(queue_tid, NULL);
 	}
 
 	close(manager_ptr->notifiers[1]);
 	if (worker_tid) {
-		CFC_LOG_ERROR("wait for worker thread");
+		CFC_LOG_DEBUG("wait for worker thread");
 		pthread_join(worker_tid, NULL);
 	}
 	redis_free();
