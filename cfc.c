@@ -245,10 +245,10 @@ int redis_incr(char *func)
     redisReply *reply = NULL;
     smart_str command = { 0 };
     smart_str_appends(&command, "HINCRBY ");
-    smart_str_appendl(&command, HASH_TABLE_NAME, strlen(HASH_TABLE_NAME));
-    smart_str_appendl(&command, " ", strlen(" "));
-    smart_str_appendl(&command, func, strlen(func));
-    smart_str_appendl(&command, " 1", strlen(" 1"));
+    smart_str_appends(&command, HASH_TABLE_NAME);
+    smart_str_appends(&command, " ");
+    smart_str_appends(&command, func);
+    smart_str_appends(&command, " 1");
     smart_str_0(&command);
     reply = redisCommand(g_redis, command.s->val);
     if (g_redis->err != 0
