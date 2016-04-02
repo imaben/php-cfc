@@ -417,7 +417,7 @@ void *cfc_thread_worker(void *arg)
 
 			for (;;) {
 				result = read(notify, &tmp, 1);
-				if (result == -1 || tmp != '\0')) {
+				if (result == -1 || tmp != '\0') {
 					break;
 				}
 
