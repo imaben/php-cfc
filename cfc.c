@@ -65,14 +65,14 @@ cfc_split_t cfc_prefixs = { 0 };
 static int cfc_split(char *delim, char *str, cfc_split_t *t)
 {
     int len = strlen(str);
-    t->orig = (char *)malloc(strlen(str) * sizeof(char) + 1);
+    t->orig = (char *)pemalloc(strlen(str) * sizeof(char) + 1, 1);
     t->count = 0;
     memcpy(t->orig, str, len);
     t->orig[len] = '\0';
     char *p = strtok(t->orig, delim);
     while (p) {
         if (t->count == 0) {
-            t->val = (char **)malloc(sizeof(char *));
+            t->val = (char **)pemalloc(sizeof(char *), 1);
         } else {
             t->val = (char **)realloc(t->val, sizeof(char *) * (t->count + 1));
         }
@@ -85,12 +85,12 @@ static int cfc_split(char *delim, char *str, cfc_split_t *t)
 
 static void cfc_split_free(cfc_split_t *t)
 {
-	free(t->orig);
+	pefree(t->orig, 1);
 	for (int i = 0; i < t->count; i++) {
-		free(t->val[i]);
+		pefree(t->val[i], 1);
 	}
 	if (t->count > 0) {
-		free(t->val);
+		pefree(t->val, 1);
 	}
 }
 
@@ -383,7 +383,9 @@ static void my_zend_execute_ex(zend_execute_data *execute_data)
 		}
 	} else {
 		push_func_to_queue(func);
-	} efree(func); end:
+	}
+    efree(func);
+end:
 	old_zend_execute_ex(execute_data TSRMLS_CC);
 }
 
@@ -439,7 +441,7 @@ void *cfc_thread_worker(void *arg)
 
 				if (item) {
 					result = redis_incr(item->buffer);
-					free(item);
+					pefree(item, 1);
 				}
 				if (result == 0) {
 					pthread_exit(0);
