@@ -243,22 +243,14 @@ int redis_incr(char *func)
 	int r = -1;
 
     redisReply *reply = NULL;
-    smart_str command = { 0 };
-    smart_str_appends(&command, "HINCRBY ");
-    smart_str_appends(&command, HASH_TABLE_NAME);
-    smart_str_appends(&command, " ");
-    smart_str_appends(&command, func);
-    smart_str_appends(&command, " 1");
-    smart_str_0(&command);
-    reply = redisCommand(g_redis, command.s->val);
+    reply = redisCommand(g_redis, "HINCRBY %s %s 1", HASH_TABLE_NAME, func);
     if (g_redis->err != 0
 		|| reply == NULL
         || reply->type != REDIS_REPLY_INTEGER) {
-        CFC_LOG_ERROR("redis hash set failure, error:%d, errstr:%s, command:%s\n", g_redis->err, g_redis->errstr, command.s->val);
+        CFC_LOG_ERROR("redis hash set failure, error:%d, errstr:%s\n", g_redis->err, g_redis->errstr);
     } else {
         r = (int)reply->integer;
     }
-    smart_str_free(&command);
     freeReplyObject(reply);
 	return r;
 }
@@ -395,8 +387,6 @@ void *cfc_thread_worker(void *arg)
 	CFC_LOG_DEBUG("Work thread started");
 	fd_set read_set;
 	int notify = manager_ptr->notifiers[0];
-	struct timeval tv = {3, 0}; /* 1 sec to update redis */
-
 
 	for (;;) {
 
@@ -415,8 +405,6 @@ void *cfc_thread_worker(void *arg)
 			char tmp;
 			int result;
 			cfc_item_t *item;
-			int is_quit = 0;
-
 			for (;;) {
 				result = read(notify, &tmp, 1);
 				if (result == -1 || tmp != '\0') {
@@ -443,6 +431,7 @@ void *cfc_thread_worker(void *arg)
 					result = redis_incr(item->buffer);
 					pefree(item, 1);
 				}
+
 				if (result == 0) {
 					pthread_exit(0);
 				}
@@ -620,6 +609,7 @@ PHP_MSHUTDOWN_FUNCTION(cfc)
 		CFC_LOG_DEBUG("wait for worker thread");
 		pthread_join(worker_tid, NULL);
 	}
+
 	redis_free();
 	cfc_split_free(&cfc_prefixs);
 	zend_execute_ex = old_zend_execute_ex;
