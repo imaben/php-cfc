@@ -1,4 +1,4 @@
-# cfc
+# php-cfc
 
 ## Capture function call
 

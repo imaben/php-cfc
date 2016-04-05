@@ -506,7 +506,6 @@ void *cfc_thread_queue(void *arg)
 				}
 				offset = read_buf;
 				if (offset[len - 1] != '\0') { /* 有未读完的数据 */
-					CFC_LOG_DEBUG("unfinished--:%s", offset);
 					int i = 1;
 					while (1) {
 						if (i >= len) {
@@ -516,7 +515,6 @@ void *cfc_thread_queue(void *arg)
 						if (*(offset + len - 1 - i) == '\0') {
 							memcpy(unfinished, offset + len - i, i - 1);
 							memset(offset + len - i, 0, 1);
-							CFC_LOG_DEBUG("unfinished:%s", unfinished);
 							break;
 						}
 						i++;
