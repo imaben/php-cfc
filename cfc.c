@@ -54,6 +54,8 @@ static cfc_manager_t  __manager, *manager_ptr = &__manager;
 pthread_t worker_tid = 0;
 pthread_t queue_tid = 0;
 
+static int stop_capture = 0;
+
 typedef struct {
     char *orig;
     int count;
@@ -251,6 +253,22 @@ int redis_incr(char *func)
     } else {
         r = (int)reply->integer;
     }
+
+	if (g_redis->err == REDIS_ERR_EOF) { /** The server closed the connection */
+		int retry = 0;
+		while (redis_init() == -1) {
+			if (retry > 3) {
+				stop_capture = 1;
+				break;
+			}
+			retry++;
+			sleep(1);
+		}
+		if (retry <= 3) {
+			freeReplyObject(reply);
+			return redis_incr(func);
+		}
+	}
     freeReplyObject(reply);
 	return r;
 }
@@ -362,6 +380,9 @@ static void push_func_to_queue(char *func)
 
 static void my_zend_execute_ex(zend_execute_data *execute_data)
 {
+	if (stop_capture) {
+		goto end;
+	}
 	char *func = NULL;
 	func = get_function_name(execute_data TSRMLS_CC);
 	if (!func) {
