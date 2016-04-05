@@ -33,6 +33,7 @@
 #include <fcntl.h>
 
 #define HASH_TABLE_NAME "cfc_hash"
+#define BUFFER_SIZE 4096
 
 /* If you declare any globals in php_cfc.h uncomment this:
 ZEND_DECLARE_MODULE_GLOBALS(cfc)
@@ -468,8 +469,8 @@ void *cfc_thread_queue(void *arg)
 	CFC_LOG_DEBUG("Queue thread started");
 	fd_set read_set;
 	int queue = manager_ptr->queues[0];
-	char read_buf[4096];
-
+	char read_buf[BUFFER_SIZE], *read_buf_ptr = read_buf;;
+	char unfinished[BUFFER_SIZE];
 	for (;;) {
 
 		FD_ZERO(&read_set);
@@ -486,10 +487,16 @@ void *cfc_thread_queue(void *arg)
 		if (FD_ISSET(queue, &read_set)) {
 			int len;
 			char *offset;
-
+			memset(unfinished, 0, BUFFER_SIZE);
 			for (;;) {
-				memset(read_buf, 0, sizeof(read_buf));
-				len = read(queue, &read_buf, sizeof(read_buf));
+				memset(read_buf, 0, BUFFER_SIZE);
+				if (strlen(unfinished)) {
+					strcpy(read_buf_ptr, unfinished);
+					len = read(queue, read_buf_ptr + strlen(unfinished), BUFFER_SIZE);
+					memset(unfinished, 0, BUFFER_SIZE);
+				} else {
+					len = read(queue, read_buf_ptr, BUFFER_SIZE);
+				}
 				if (len == -1) {
 					break;
 				}
@@ -498,6 +505,23 @@ void *cfc_thread_queue(void *arg)
 					pthread_exit(0);
 				}
 				offset = read_buf;
+				if (offset[len - 1] != '\0') { /* 有未读完的数据 */
+					CFC_LOG_DEBUG("unfinished--:%s", offset);
+					int i = 1;
+					while (1) {
+						if (i >= len) {
+							memcpy(unfinished, offset, len);
+							break;
+						}
+						if (*(offset + len - 1 - i) == '\0') {
+							memcpy(unfinished, offset + len - i, i - 1);
+							memset(offset + len - i, 0, 1);
+							CFC_LOG_DEBUG("unfinished:%s", unfinished);
+							break;
+						}
+						i++;
+					}
+				}
 				while (strlen(offset)) {
 					int offset_len = strlen(offset);
 					cfc_item_t *item;
@@ -546,7 +570,7 @@ int cfc_init(void)
 
 	manager_ptr->head = NULL;
 	manager_ptr->tail = NULL;
-	manager_ptr->qlock = 0; /* init can lock */
+	manager_ptr->qlock = 0;
 
 	if (pipe(manager_ptr->notifiers) == -1) {
 		return -1;
