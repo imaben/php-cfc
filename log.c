@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <time.h>
 #include "log.h"
 
@@ -9,7 +11,7 @@ static char *cfc_error_titles[CFC_LOG_LEVEL_ERROR + 1] = {
     "DEBUG", "NOTICE", "WARN", "ERROR"
 };
 
-static FILE *cfc_log_fp = NULL;
+static int cfc_log_fd = 0;
 static int cfc_log_mark = CFC_LOG_LEVEL_DEBUG;
 static int cfc_log_initialize = 0;
 static char cfc_log_buffer[4096];
@@ -28,13 +30,13 @@ int cfc_init_log(char *file, int mark)
     }
 
     if (file) {
-        cfc_log_fp = fopen(file, "a+");
-        if (!cfc_log_fp) {
+        cfc_log_fd = open(file, O_WRONLY | O_CREAT | O_APPEND , 0666);
+        if (!cfc_log_fd) {
             return -1;
         }
 
     } else {
-        cfc_log_fp = stderr;
+        dup2(cfc_log_fd, STDERR_FILENO);
     }
 
     cfc_log_mark = mark;
@@ -78,8 +80,7 @@ void cfc_log(int level, char *fmt, ...)
 
     cfc_log_buffer[off1 + off2] = '\n';
 
-    fwrite(cfc_log_buffer, off1 + off2 + 1, 1, cfc_log_fp);
-    fflush(cfc_log_fp);
+    write(cfc_log_fd, cfc_log_buffer, off1 + off2 + 1);
 }
 
 
@@ -89,12 +90,12 @@ void cfc_destroy_log()
         return;
     }
 
-    if (cfc_log_fp != stderr) {
-        fclose(cfc_log_fp);
+    if (cfc_log_fd && cfc_log_fd != STDERR_FILENO) {
+        close(cfc_log_fd);
     }
 }
 
-FILE *cfc_log_get_fp()
+int cfc_log_get_fd()
 {
-    return cfc_log_fp;
+    return cfc_log_fd;
 }
