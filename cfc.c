@@ -492,7 +492,7 @@ void *cfc_thread_queue(void *arg)
 				memset(read_buf, 0, BUFFER_SIZE);
 				if (strlen(unfinished)) {
 					strcpy(read_buf_ptr, unfinished);
-					len = read(queue, read_buf_ptr + strlen(unfinished), BUFFER_SIZE);
+					len = read(queue, read_buf_ptr + strlen(unfinished), BUFFER_SIZE - strlen(unfinished));
 					memset(unfinished, 0, BUFFER_SIZE);
 				} else {
 					len = read(queue, read_buf_ptr, BUFFER_SIZE);
