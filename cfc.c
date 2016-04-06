@@ -58,32 +58,32 @@ pthread_t queue_tid = 0;
 static int stop_capture = 0;
 
 typedef struct {
-    char *orig;
-    int count;
-    char **val;
+	char *orig;
+	int count;
+	char **val;
 } cfc_split_t;
 
 cfc_split_t cfc_prefixs = { 0 };
 
 static int cfc_split(char *delim, char *str, cfc_split_t *t)
 {
-    int len = strlen(str);
-    t->orig = (char *)pemalloc(strlen(str) * sizeof(char) + 1, 1);
-    t->count = 0;
-    memcpy(t->orig, str, len);
-    t->orig[len] = '\0';
-    char *p = strtok(t->orig, delim);
-    while (p) {
-        if (t->count == 0) {
-            t->val = (char **)pemalloc(sizeof(char *), 1);
-        } else {
-            t->val = (char **)realloc(t->val, sizeof(char *) * (t->count + 1));
-        }
-        t->val[t->count] = strdup(p);
-        p = strtok(NULL, delim);
-        t->count++;
-    }
-    return 0;
+	int len = strlen(str);
+	t->orig = (char *)pemalloc(strlen(str) * sizeof(char) + 1, 1);
+	t->count = 0;
+	memcpy(t->orig, str, len);
+	t->orig[len] = '\0';
+	char *p = strtok(t->orig, delim);
+	while (p) {
+		if (t->count == 0) {
+			t->val = (char **)pemalloc(sizeof(char *), 1);
+		} else {
+			t->val = (char **)realloc(t->val, sizeof(char *) * (t->count + 1));
+		}
+		t->val[t->count] = strdup(p);
+		p = strtok(NULL, delim);
+		t->count++;
+	}
+	return 0;
 }
 
 static void cfc_split_free(cfc_split_t *t)
@@ -99,117 +99,37 @@ static void cfc_split_free(cfc_split_t *t)
 
 void cfc_atoi(const char *str, int *ret, int *len)
 {
-    const char *ptr = str;
-    char ch;
-    int absolute = 1;
-    int rlen, result;
+	const char *ptr = str;
+	char ch;
+	int absolute = 1;
+	int rlen, result;
 
-    ch = *ptr;
+	ch = *ptr;
 
-    if (ch == '-') {
-        absolute = -1;
-        ++ptr;
-    } else if (ch == '+') {
-        absolute = 1;
-        ++ptr;
-    }
+	if (ch == '-') {
+		absolute = -1;
+		++ptr;
+	} else if (ch == '+') {
+		absolute = 1;
+		++ptr;
+	}
 
-    for (rlen = 0, result = 0; *ptr != '\0'; ptr++) {
-        ch = *ptr;
+	for (rlen = 0, result = 0; *ptr != '\0'; ptr++) {
+		ch = *ptr;
 
-        if (ch >= '0' && ch <= '9') {
-            result = result * 10 + (ch - '0');
-            rlen++;
-        } else {
-            break;
-        }
-    }
+		if (ch >= '0' && ch <= '9') {
+			result = result * 10 + (ch - '0');
+			rlen++;
+		} else {
+			break;
+		}
+	}
 
-    if (ret) *ret = absolute * result;
-    if (len) *len = rlen;
+	if (ret)
+		*ret = absolute * result;
+	if (len)
+		*len = rlen;
 }
-
-ZEND_INI_MH(php_cfc_enable)
-{
-    if (!new_value || new_value->len == 0) {
-        return FAILURE;
-    }
-
-    if (!strcasecmp(new_value->val, "on") || !strcmp(new_value->val, "1")) {
-        cfc_enable = 1;
-    } else {
-        cfc_enable = 0;
-    }
-
-    return SUCCESS;
-}
-
-ZEND_INI_MH(php_cfc_redis_host)
-{
-    if (!new_value || new_value->len == 0) {
-        return FAILURE;
-    }
-
-    cfc_redis_host = strdup(new_value->val);
-    if (cfc_redis_host == NULL) {
-        return FAILURE;
-    }
-
-    return SUCCESS;
-}
-
-ZEND_INI_MH(php_cfc_redis_port)
-{
-    int len;
-
-    if (!new_value || new_value->len == 0) {
-        return FAILURE;
-    }
-
-    cfc_atoi(new_value->val, &cfc_redis_port, &len);
-
-    if (len == 0) { /*failed */
-        return FAILURE;
-    }
-
-    return SUCCESS;
-}
-
-ZEND_INI_MH(php_cfc_prefix)
-{
-    if (!new_value || new_value->len == 0) {
-        return FAILURE;
-    }
-    cfc_prefix = strdup(new_value->val);
-    if (cfc_prefix == NULL) {
-        return FAILURE;
-    }
-
-    return SUCCESS;
-}
-
-ZEND_INI_MH(php_cfc_logfile)
-{
-    if (!new_value || new_value->len == 0) {
-        return FAILURE;
-    }
-
-    cfc_logfile = strdup(new_value->val);
-    if (cfc_logfile== NULL) {
-        return FAILURE;
-    }
-
-    return SUCCESS;
-}
-
-PHP_INI_BEGIN()
-	PHP_INI_ENTRY("cfc.enable", "0", PHP_INI_ALL, php_cfc_enable)
-	PHP_INI_ENTRY("cfc.redis_host", "127.0.0.1", PHP_INI_ALL, php_cfc_redis_host)
-	PHP_INI_ENTRY("cfc.redis_port", "6379", PHP_INI_ALL, php_cfc_redis_port)
-	PHP_INI_ENTRY("cfc.prefix", "", PHP_INI_ALL, php_cfc_prefix)
-	PHP_INI_ENTRY("cfc.logfile", "/tmp/cfc.log", PHP_INI_ALL, php_cfc_logfile)
-PHP_INI_END()
-/* }}} */
 
 /* Remove the following function when you have successfully modified config.m4
    so that your module can be compiled into PHP, it exists only for testing
@@ -219,21 +139,43 @@ PHP_INI_END()
 /* {{{ proto string confirm_cfc_compiled(string arg)
    Return a string to confirm that the module is compiled in */
 
+PHP_FUNCTION(confirm_cfc_compiled)
+{
+	char *arg = NULL;
+	size_t arg_len, len;
+	zend_string *strg;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS(), "s", &arg, &arg_len) == FAILURE) {
+		return;
+	}
+
+	strg = strpprintf(0, "Congratulations! You have successfully modified ext/%.78s/config.m4. Module %.78s is now compiled into PHP.", "cfc", arg);
+
+	RETURN_STR(strg);
+}
+
+/* }}} */
+/* The previous line is meant for vim and emacs, so it can correctly fold and
+   unfold functions in source code. See the corresponding marks just before
+   function definition, where the functions purpose is also documented. Please
+   follow this convention for the convenience of others editing your code.
+*/
+
 int redis_init()
 {
-    char *msg;
+	char *msg;
 
-    if (!cfc_redis_host) {
-        CFC_LOG_ERROR("redis host have not set");
+	if (!cfc_redis_host) {
+		CFC_LOG_ERROR("redis host have not set");
 		return -1;
-    }
+	}
 
-    g_redis = redisConnect(cfc_redis_host, cfc_redis_port);
-    if (g_redis == NULL || g_redis->err) {
-        CFC_LOG_ERROR("Can not connect to redis server");
+	g_redis = redisConnect(cfc_redis_host, cfc_redis_port);
+	if (g_redis == NULL || g_redis->err) {
+		CFC_LOG_ERROR("Can not connect to redis server");
 		return -1;
-    }
-    return 0;
+	}
+	return 0;
 }
 
 void redis_free()
@@ -244,16 +186,15 @@ void redis_free()
 int redis_incr(char *func)
 {
 	int r = -1;
-
-    redisReply *reply = NULL;
-    reply = redisCommand(g_redis, "HINCRBY %s %s 1", HASH_TABLE_NAME, func);
-    if (g_redis->err != 0
-		|| reply == NULL
-        || reply->type != REDIS_REPLY_INTEGER) {
-        CFC_LOG_ERROR("redis hash set failure, error:%d, errstr:%s\n", g_redis->err, g_redis->errstr);
-    } else {
-        r = (int)reply->integer;
-    }
+	redisReply *reply = NULL;
+	reply = redisCommand(g_redis, "HINCRBY %s %s 1", HASH_TABLE_NAME, func);
+	if (g_redis->err != 0
+			|| reply == NULL
+			|| reply->type != REDIS_REPLY_INTEGER) {
+		CFC_LOG_ERROR("redis hash set failure, error:%d, errstr:%s\n", g_redis->err, g_redis->errstr);
+	} else {
+		r = (int)reply->integer;
+	}
 
 	if (g_redis->err == REDIS_ERR_EOF) { /** The server closed the connection */
 		int retry = 0;
@@ -274,35 +215,14 @@ int redis_incr(char *func)
 	return r;
 }
 
-PHP_FUNCTION(confirm_cfc_compiled)
-{
-	char *arg = NULL;
-	size_t arg_len, len;
-	zend_string *strg;
-
-	if (zend_parse_parameters(ZEND_NUM_ARGS(), "s", &arg, &arg_len) == FAILURE) {
-		return;
-	}
-
-	strg = strpprintf(0, "Congratulations! You have successfully modified ext/%.78s/config.m4. Module %.78s is now compiled into PHP.", "cfc", arg);
-
-	RETURN_STR(strg);
-}
-/* }}} */
-/* The previous line is meant for vim and emacs, so it can correctly fold and
-   unfold functions in source code. See the corresponding marks just before
-   function definition, where the functions purpose is also documented. Please
-   follow this convention for the convenience of others editing your code.
-*/
-
 int set_nonblocking(int fd)
 {
-    int flags;
+	int flags;
 
-    if ((flags = fcntl(fd, F_GETFL, 0)) < 0 ||
-         fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
-        return -1;
-    return 0;
+	if ((flags = fcntl(fd, F_GETFL, 0)) < 0 ||
+			fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+		return -1;
+	return 0;
 }
 
 static char *get_function_name(zend_execute_data * execute_data)
@@ -405,7 +325,6 @@ end:
 
 void *cfc_thread_worker(void *arg)
 {
-	//pthread_detach(pthread_self());
 	CFC_LOG_DEBUG("Work thread started");
 	fd_set read_set;
 	int notify = manager_ptr->notifiers[0];
@@ -554,7 +473,6 @@ void *cfc_thread_queue(void *arg)
 			}
 		}
 	}
-
 	return NULL;
 }
 
@@ -613,6 +531,88 @@ int cfc_init(void)
 	return 0;
 
 }
+
+ZEND_INI_MH(php_cfc_enable)
+{
+	if (!new_value || new_value->len == 0) {
+		return FAILURE;
+	}
+
+	if (!strcasecmp(new_value->val, "on") || !strcmp(new_value->val, "1")) {
+		cfc_enable = 1;
+	} else {
+		cfc_enable = 0;
+	}
+
+	return SUCCESS;
+}
+
+ZEND_INI_MH(php_cfc_redis_host)
+{
+	if (!new_value || new_value->len == 0) {
+		return FAILURE;
+	}
+
+	cfc_redis_host = strdup(new_value->val);
+	if (cfc_redis_host == NULL) {
+		return FAILURE;
+	}
+
+	return SUCCESS;
+}
+
+ZEND_INI_MH(php_cfc_redis_port)
+{
+	int len;
+
+	if (!new_value || new_value->len == 0) {
+		return FAILURE;
+	}
+
+	cfc_atoi(new_value->val, &cfc_redis_port, &len);
+
+	if (len == 0) { /*failed */
+		return FAILURE;
+	}
+
+	return SUCCESS;
+}
+
+ZEND_INI_MH(php_cfc_prefix)
+{
+	if (!new_value || new_value->len == 0) {
+		return FAILURE;
+	}
+	cfc_prefix = strdup(new_value->val);
+	if (cfc_prefix == NULL) {
+		return FAILURE;
+	}
+
+	return SUCCESS;
+}
+
+ZEND_INI_MH(php_cfc_logfile)
+{
+	if (!new_value || new_value->len == 0) {
+		return FAILURE;
+	}
+
+	cfc_logfile = strdup(new_value->val);
+	if (cfc_logfile== NULL) {
+		return FAILURE;
+	}
+
+	return SUCCESS;
+}
+
+PHP_INI_BEGIN()
+	PHP_INI_ENTRY("cfc.enable", "0", PHP_INI_ALL, php_cfc_enable)
+	PHP_INI_ENTRY("cfc.redis_host", "127.0.0.1", PHP_INI_ALL, php_cfc_redis_host)
+	PHP_INI_ENTRY("cfc.redis_port", "6379", PHP_INI_ALL, php_cfc_redis_port)
+	PHP_INI_ENTRY("cfc.prefix", "", PHP_INI_ALL, php_cfc_prefix)
+	PHP_INI_ENTRY("cfc.logfile", "/tmp/cfc.log", PHP_INI_ALL, php_cfc_logfile)
+PHP_INI_END()
+
 /* {{{ PHP_MINIT_FUNCTION
  */
 PHP_MINIT_FUNCTION(cfc)

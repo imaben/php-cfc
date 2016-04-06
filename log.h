@@ -30,14 +30,24 @@ void cfc_destroy_log();
 FILE *cfc_log_get_fp();
 
 #define CFC_LOG_DEBUG(fmt, ...) \
-    cfc_log(CFC_LOG_LEVEL_DEBUG, fmt, ##__VA_ARGS__)
+	cfc_log(CFC_LOG_LEVEL_DEBUG, fmt, ##__VA_ARGS__)
 
 #define CFC_LOG_NOTICE(fmt, ...) \
-    cfc_log(CFC_LOG_LEVEL_NOTICE, fmt, ##__VA_ARGS__)
+	cfc_log(CFC_LOG_LEVEL_NOTICE, fmt, ##__VA_ARGS__)
 
 #define CFC_LOG_WARN(fmt, ...) \
-    cfc_log(CFC_LOG_LEVEL_WARN, fmt, ##__VA_ARGS__)
+	cfc_log(CFC_LOG_LEVEL_WARN, fmt, ##__VA_ARGS__)
 
 #define CFC_LOG_ERROR(fmt, ...) \
-    cfc_log(CFC_LOG_LEVEL_ERROR, fmt, ##__VA_ARGS__)
+	cfc_log(CFC_LOG_LEVEL_ERROR, fmt, ##__VA_ARGS__)
+
 #endif
+
+/*
+ * Local variables:
+ * tab-width: 4
+ * c-basic-offset: 4
+ * End:
+ * vim600: noet sw=4 ts=4 fdm=marker
+ * vim<600: noet sw=4 ts=4
+ */
