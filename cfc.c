@@ -33,7 +33,7 @@
 #include <fcntl.h>
 
 #define HASH_TABLE_NAME "cfc_hash"
-#define BUFFER_SIZE 4096
+#define BUFFER_SIZE 1024
 
 /* If you declare any globals in php_cfc.h uncomment this:
 ZEND_DECLARE_MODULE_GLOBALS(cfc)
@@ -211,7 +211,7 @@ int redis_incr(char *func)
 			return redis_incr(func);
 		}
 	}
-    freeReplyObject(reply);
+	freeReplyObject(reply);
 	return r;
 }
 
@@ -225,11 +225,11 @@ int set_nonblocking(int fd)
 	return 0;
 }
 
-static char *get_function_name(zend_execute_data * execute_data)
+static char *get_function_name(zend_execute_data * execute_data, size_t *output_len)
 {
 	zend_execute_data *data;
 	char *ret = NULL;
-	int len;
+	size_t len;
 	const char * cls;
 	const char * func;
 	zend_function *curr_func;
@@ -252,14 +252,18 @@ static char *get_function_name(zend_execute_data * execute_data)
 							data->called_scope->name->val : NULL);
 			if (cls)
 			{
-				len = strlen(cls) + strlen(func) + 10;
-				ret = (char*) emalloc(len);
-				snprintf(ret, len, "%s::%s", cls, func);
+				len = strlen(cls) + strlen(func) + strlen("::") + 1;
+				ret = (char*) emalloc(len + sizeof(size_t));
+				memcpy(ret, &len, sizeof(size_t));
+				sprintf(ret + sizeof(size_t), "%s::%s", cls, func);
+				*output_len = len + sizeof(size_t);
 			}
 			else
 			{
-				ret = (char*) emalloc(len);
-				snprintf(ret, len, "%s", func);
+				ret = (char*) emalloc(len + sizeof(size_t));
+				memcpy(ret, &len, sizeof(size_t));
+				sprintf(ret + sizeof(size_t), "%s", func);
+				*output_len = len + sizeof(size_t);
 			}
 		}
 		else
@@ -291,12 +295,12 @@ static char *get_function_name(zend_execute_data * execute_data)
 	return ret;
 }
 
-static void push_func_to_queue(char *func)
+static void push_func_to_queue(char *func, size_t len)
 {
 	if (NULL == func) {
 		return;
 	}
-	write(manager_ptr->queues[1], func, strlen(func) + 1);
+	write(manager_ptr->queues[1], func, len);
 }
 
 static void my_zend_execute_ex(zend_execute_data *execute_data)
@@ -305,20 +309,21 @@ static void my_zend_execute_ex(zend_execute_data *execute_data)
 		goto end;
 	}
 	char *func = NULL;
-	func = get_function_name(execute_data TSRMLS_CC);
+	size_t len;
+	func = get_function_name(execute_data, &len);
 	if (!func) {
 		goto end;
 	}
 	if (cfc_prefixs.count) {
 		for (int i = 0; i < cfc_prefixs.count; i++) {
-			if (strncmp(cfc_prefixs.val[i], func, strlen(cfc_prefixs.val[i])) == 0) {
-				push_func_to_queue(func);
+			if (strncmp(cfc_prefixs.val[i], func + sizeof(size_t), strlen(cfc_prefixs.val[i])) == 0) {
+				push_func_to_queue(func, len);
 			}
 		}
 	} else {
-		push_func_to_queue(func);
+		push_func_to_queue(func, len);
 	}
-    efree(func);
+	efree(func);
 end:
 	old_zend_execute_ex(execute_data TSRMLS_CC);
 }
@@ -353,7 +358,6 @@ void *cfc_thread_worker(void *arg)
 					break;
 				}
 
-				/* Get item from worker queue */
 				spin_lock(&manager_ptr->qlock);
 
 				item = manager_ptr->head;
@@ -389,8 +393,7 @@ void *cfc_thread_queue(void *arg)
 	CFC_LOG_DEBUG("Queue thread started");
 	fd_set read_set;
 	int queue = manager_ptr->queues[0];
-	char read_buf[BUFFER_SIZE], *read_buf_ptr = read_buf;;
-	char unfinished[BUFFER_SIZE];
+	char read_buf[BUFFER_SIZE];
 	for (;;) {
 
 		FD_ZERO(&read_set);
@@ -404,73 +407,54 @@ void *cfc_thread_queue(void *arg)
 			continue;
 		}
 
+#define check_read_result(r) \
+		if (r == -1) { \
+			break; \
+		} \
+		if (r == 0) { \
+			pthread_exit(0); \
+		}
+
 		if (FD_ISSET(queue, &read_set)) {
-			int len;
 			char *offset;
-			memset(unfinished, 0, BUFFER_SIZE);
+			size_t len;
+			int r;
 			for (;;) {
 				memset(read_buf, 0, BUFFER_SIZE);
-				if (strlen(unfinished)) {
-					strcpy(read_buf_ptr, unfinished);
-					len = read(queue, read_buf_ptr + strlen(unfinished), BUFFER_SIZE - strlen(unfinished));
-					memset(unfinished, 0, BUFFER_SIZE);
-				} else {
-					len = read(queue, read_buf_ptr, BUFFER_SIZE);
-				}
-				if (len == -1) {
+				r = read(queue, &len, sizeof(size_t));
+				check_read_result(r);
+				r = read(queue, read_buf, len);
+				check_read_result(r);
+				if (r != len) {
+					CFC_LOG_WARN("read failure");
 					break;
 				}
-
-				if (len == 0) {
-					pthread_exit(0);
+				cfc_item_t *item;
+				item = (cfc_item_t *)pemalloc(sizeof(*item) + len, 1);
+				if (!item) {
+					CFC_LOG_WARN("Memory malloc failure");
+					continue;
 				}
-				offset = read_buf;
-				if (offset[len - 1] != '\0') { /* 有未读完的数据 */
-					int i = 1;
-					while (1) {
-						if (i >= len) {
-							memcpy(unfinished, offset, len);
-							break;
-						}
-						if (*(offset + len - 1 - i) == '\0') {
-							memcpy(unfinished, offset + len - i, i - 1);
-							memset(offset + len - i, 0, 1);
-							break;
-						}
-						i++;
-					}
+
+				item->size = len;
+				item->next = NULL;
+				memcpy(item->buffer, read_buf, len);
+
+				spin_lock(&manager_ptr->qlock);
+
+				if (!manager_ptr->head) {
+					manager_ptr->head = item;
 				}
-				while (strlen(offset)) {
-					int offset_len = strlen(offset);
-					cfc_item_t *item;
-					int length = 0;
-					length = sizeof(*item) + offset_len + 1;
-					item = (cfc_item_t *)pemalloc(length, 1);
-					if (!item) {
-						CFC_LOG_WARN("Memory malloc failure");
-						continue;
-					}
-					item->size = offset_len + 1;
-					item->next = NULL;
-					memcpy(item->buffer, offset, offset_len + 1);
 
-					spin_lock(&manager_ptr->qlock);
-
-					if (!manager_ptr->head) {
-						manager_ptr->head = item;
-					}
-
-					if (manager_ptr->tail) {
-						manager_ptr->tail->next = item;
-					}
-
-					manager_ptr->tail = item;
-
-					spin_unlock(&manager_ptr->qlock);
-					/* notify worker thread */
-					write(manager_ptr->notifiers[1], "\0", 1);
-					offset = offset + offset_len + 1;
+				if (manager_ptr->tail) {
+					manager_ptr->tail->next = item;
 				}
+
+				manager_ptr->tail = item;
+
+				spin_unlock(&manager_ptr->qlock);
+				/* notify worker thread */
+				write(manager_ptr->notifiers[1], "\0", 1);
 			}
 		}
 	}

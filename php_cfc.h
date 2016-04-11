@@ -51,7 +51,7 @@ ZEND_END_MODULE_GLOBALS(cfc)
 typedef struct _cfc_item_s {
 	struct _cfc_item_s *next;
 	int size;
-	char buffer[1];
+	char buffer[];
 } cfc_item_t;
 
 typedef struct {
