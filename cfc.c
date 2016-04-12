@@ -288,7 +288,10 @@ static char *get_function_name(zend_execute_data * execute_data, size_t *output_
 
 			if (func)
 			{
-				ret = estrdup(func);
+				len = strlen(func) + 1;
+				ret = (char*) emalloc(len + sizeof(size_t));
+				memcpy(ret, &len, sizeof(size_t));
+				memcpy(ret + sizeof(size_t), func, len);
 			}
 		}
 	}
