@@ -238,46 +238,34 @@ static char *get_function_name(zend_execute_data * execute_data, size_t *output_
 
 	data = EG(current_execute_data);
 
-	if (data)
-	{
+	if (data) {
 		curr_func = data->func;
 		/* extract function name from the meta info */
-		if (curr_func->common.function_name)
-		{
+		if (curr_func->common.function_name) {
 			func = curr_func->common.function_name->val;
 			len  = curr_func->common.function_name->len + 1;
-			cls = curr_func->common.scope ?
-					curr_func->common.scope->name->val :
-					(data->called_scope ?
-							data->called_scope->name->val : NULL);
-			if (cls)
-			{
+			cls = curr_func->common.scope ? curr_func->common.scope->name->val :
+					(data->called_scope ? data->called_scope->name->val : NULL);
+			if (cls) {
 				len = strlen(cls) + strlen(func) + strlen("::") + 1;
 				ret = (char*) emalloc(len + sizeof(size_t));
 				memcpy(ret, &len, sizeof(size_t));
 				sprintf(ret + sizeof(size_t), "%s::%s", cls, func);
 				*output_len = len + sizeof(size_t);
-			}
-			else
-			{
+			} else {
 				ret = (char*) emalloc(len + sizeof(size_t));
 				memcpy(ret, &len, sizeof(size_t));
 				sprintf(ret + sizeof(size_t), "%s", func);
 				*output_len = len + sizeof(size_t);
 			}
-		}
-		else
-		{
-			if (data->prev_execute_data)
-			{
+		} else {
+			if (data->prev_execute_data) {
 				opline  = data->prev_execute_data->opline;
-			}
-			else
-			{
+			} else {
 				opline  = data->opline;
 			}
-			switch (opline->extended_value)
-			{
+
+			switch (opline->extended_value) {
 			case ZEND_EVAL:
 				func = "eval";
 				break;
@@ -286,8 +274,7 @@ static char *get_function_name(zend_execute_data * execute_data, size_t *output_
 				break;
 			}
 
-			if (func)
-			{
+			if (func) {
 				len = strlen(func) + 1;
 				ret = (char*) emalloc(len + sizeof(size_t));
 				memcpy(ret, &len, sizeof(size_t));
@@ -333,7 +320,6 @@ end:
 
 void *cfc_thread_worker(void *arg)
 {
-	CFC_LOG_DEBUG("Work thread started");
 	fd_set read_set;
 	int notify = manager_ptr->notifiers[0];
 
@@ -393,7 +379,6 @@ void *cfc_thread_worker(void *arg)
 
 void *cfc_thread_queue(void *arg)
 {
-	CFC_LOG_DEBUG("Queue thread started");
 	fd_set read_set;
 	int queue = manager_ptr->queues[0];
 	char read_buf[BUFFER_SIZE];
@@ -631,13 +616,11 @@ PHP_MSHUTDOWN_FUNCTION(cfc)
 	// 通知线程退出
 	close(manager_ptr->queues[1]);
 	if (queue_tid) {
-		CFC_LOG_DEBUG("wait for queue thread");
 		pthread_join(queue_tid, NULL);
 	}
 
 	close(manager_ptr->notifiers[1]);
 	if (worker_tid) {
-		CFC_LOG_DEBUG("wait for worker thread");
 		pthread_join(worker_tid, NULL);
 	}
 
