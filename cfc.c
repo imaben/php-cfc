@@ -32,7 +32,6 @@
 #include <pthread.h>
 #include <fcntl.h>
 
-#define HASH_TABLE_NAME "cfc_hash"
 #define BUFFER_SIZE 1024
 
 /* If you declare any globals in php_cfc.h uncomment this:
@@ -49,6 +48,7 @@ static char* cfc_redis_host   =   NULL;
 static int   cfc_redis_port   =   6379;
 static char* cfc_prefix       =   NULL;
 static char* cfc_logfile      =   NULL;
+static char* cfc_ht_name      =   NULL;
 
 static cfc_manager_t  __manager, *manager_ptr = &__manager;
 
@@ -89,7 +89,8 @@ static int cfc_split(char *delim, char *str, cfc_split_t *t)
 static void cfc_split_free(cfc_split_t *t)
 {
 	pefree(t->orig, 1);
-	for (int i = 0; i < t->count; i++) {
+    int i;
+	for (i = 0; i < t->count; i++) {
 		pefree(t->val[i], 1);
 	}
 	if (t->count > 0) {
@@ -187,7 +188,7 @@ int redis_incr(char *func)
 {
 	int r = -1;
 	redisReply *reply = NULL;
-	reply = redisCommand(g_redis, "HINCRBY %s %s 1", HASH_TABLE_NAME, func);
+	reply = redisCommand(g_redis, "HINCRBY %s %s 1", cfc_ht_name, func);
 	if (g_redis->err != 0
 			|| reply == NULL
 			|| reply->type != REDIS_REPLY_INTEGER) {
@@ -300,12 +301,13 @@ static void my_zend_execute_ex(zend_execute_data *execute_data)
 	}
 	char *func = NULL;
 	size_t len;
+    int i;
 	func = get_function_name(execute_data, &len);
 	if (!func) {
 		goto end;
 	}
 	if (cfc_prefixs.count) {
-		for (int i = 0; i < cfc_prefixs.count; i++) {
+		for (i = 0; i < cfc_prefixs.count; i++) {
 			if (strncmp(cfc_prefixs.val[i], func + sizeof(size_t), strlen(cfc_prefixs.val[i])) == 0) {
 				push_func_to_queue(func, len);
 			}
@@ -578,12 +580,27 @@ ZEND_INI_MH(php_cfc_logfile)
 	return SUCCESS;
 }
 
+ZEND_INI_MH(php_cfc_ht_name)
+{
+	if (!new_value || new_value->len == 0) {
+		return FAILURE;
+	}
+
+	cfc_ht_name = strdup(new_value->val);
+	if (cfc_ht_name == NULL) {
+		return FAILURE;
+	}
+
+	return SUCCESS;
+}
+
 PHP_INI_BEGIN()
 	PHP_INI_ENTRY("cfc.enable", "0", PHP_INI_ALL, php_cfc_enable)
 	PHP_INI_ENTRY("cfc.redis_host", "127.0.0.1", PHP_INI_ALL, php_cfc_redis_host)
 	PHP_INI_ENTRY("cfc.redis_port", "6379", PHP_INI_ALL, php_cfc_redis_port)
 	PHP_INI_ENTRY("cfc.prefix", "", PHP_INI_ALL, php_cfc_prefix)
 	PHP_INI_ENTRY("cfc.logfile", "/tmp/cfc.log", PHP_INI_ALL, php_cfc_logfile)
+	PHP_INI_ENTRY("cfc.ht_name", "cfc_hash", PHP_INI_ALL, php_cfc_ht_name)
 PHP_INI_END()
 
 /* {{{ PHP_MINIT_FUNCTION
