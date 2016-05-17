@@ -30,3 +30,7 @@ cfc.ht_name=cfc_hash
 
 - hiredis
 - pthread
+
+### Tools
+
+[cfc-viewer](https://github.com/imaben/cfc-viewer)
