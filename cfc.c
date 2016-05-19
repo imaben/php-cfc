@@ -89,7 +89,7 @@ static int cfc_split(char *delim, char *str, cfc_split_t *t)
 static void cfc_split_free(cfc_split_t *t)
 {
 	pefree(t->orig, 1);
-    int i;
+	int i;
 	for (i = 0; i < t->count; i++) {
 		pefree(t->val[i], 1);
 	}
@@ -164,8 +164,6 @@ PHP_FUNCTION(confirm_cfc_compiled)
 
 int redis_init()
 {
-	char *msg;
-
 	if (!cfc_redis_host) {
 		CFC_LOG_ERROR("redis host have not set");
 		return -1;
@@ -301,7 +299,7 @@ static void my_zend_execute_ex(zend_execute_data *execute_data)
 	}
 	char *func = NULL;
 	size_t len;
-    int i;
+	int i;
 	func = get_function_name(execute_data, &len);
 	if (!func) {
 		goto end;
